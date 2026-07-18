@@ -118,7 +118,6 @@ function InteractiveSearchIndexerSelect({
         iconName={icons.SEARCH}
         showIndicator={!value.includes(ALL_INDEXERS)}
         text={label}
-        isDisabled={isFetching}
       />
 
       <MenuContent>
