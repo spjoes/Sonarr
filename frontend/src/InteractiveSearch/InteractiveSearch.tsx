@@ -14,16 +14,20 @@ import { align, icons, kinds, sortDirections } from 'Helpers/Props';
 import { SortDirection } from 'Helpers/Props/sortDirections';
 import InteractiveSearchType from 'InteractiveSearch/InteractiveSearchType';
 import {
+  cancelFetchReleases,
   fetchReleases,
   grabRelease,
   setEpisodeReleasesFilter,
+  setReleaseSearchIndexers,
   setReleasesSort,
   setSeasonReleasesFilter,
 } from 'Store/Actions/releaseActions';
 import createClientSideCollectionSelector from 'Store/Selectors/createClientSideCollectionSelector';
+import { EnhancedSelectInputChanged } from 'typings/inputs';
 import getErrorMessage from 'Utilities/Object/getErrorMessage';
 import translate from 'Utilities/String/translate';
 import InteractiveSearchFilterModal from './InteractiveSearchFilterModal';
+import InteractiveSearchIndexerSelect from './InteractiveSearchIndexerSelect';
 import InteractiveSearchRow from './InteractiveSearchRow';
 import styles from './InteractiveSearch.css';
 
@@ -115,10 +119,16 @@ const columns: Column[] = [
 
 interface InteractiveSearchProps {
   type: InteractiveSearchType;
-  searchPayload: object;
+  searchPayload: {
+    episodeId?: number;
+    seriesId?: number;
+    seasonNumber?: number;
+  };
 }
 
 function InteractiveSearch({ type, searchPayload }: InteractiveSearchProps) {
+  const { episodeId, seriesId, seasonNumber } = searchPayload;
+
   const {
     isFetching,
     isPopulated,
@@ -130,6 +140,7 @@ function InteractiveSearch({ type, searchPayload }: InteractiveSearchProps) {
     customFilters,
     sortKey,
     sortDirection,
+    selectedIndexerIds,
   }: ReleasesAppState & ClientSideCollectionAppState = useSelector(
     createClientSideCollectionSelector('releases', `releases.${type}`)
   );
@@ -160,23 +171,43 @@ function InteractiveSearch({ type, searchPayload }: InteractiveSearchProps) {
     [dispatch]
   );
 
-  useEffect(
-    () => {
-      // Only fetch releases if they are not already being fetched and not yet populated.
-
-      if (!isFetching && !isPopulated) {
-        dispatch(fetchReleases(searchPayload));
-      }
+  const handleIndexerChange = useCallback(
+    (change: EnhancedSelectInputChanged<number[]>) => {
+      dispatch(
+        setReleaseSearchIndexers({
+          selectedIndexerIds: change.value,
+        })
+      );
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
+    [dispatch]
   );
+
+  useEffect(() => {
+    dispatch(
+      fetchReleases({
+        episodeId,
+        seriesId,
+        seasonNumber,
+        indexerIds: selectedIndexerIds.includes(0) ? [] : selectedIndexerIds,
+      })
+    );
+
+    return () => {
+      dispatch(cancelFetchReleases());
+    };
+  }, [dispatch, episodeId, seriesId, seasonNumber, selectedIndexerIds]);
 
   const errorMessage = getErrorMessage(error);
 
   return (
     <div>
       <div className={styles.filterMenuContainer}>
+        <InteractiveSearchIndexerSelect
+          className={styles.indexerSelect}
+          value={selectedIndexerIds}
+          onChange={handleIndexerChange}
+        />
+
         <FilterMenu
           alignMenu={align.RIGHT}
           selectedFilterKey={selectedFilterKey}

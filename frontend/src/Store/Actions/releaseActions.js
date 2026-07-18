@@ -3,8 +3,9 @@ import { filterBuilderTypes, filterBuilderValueTypes, filterTypePredicates, filt
 import { createThunk, handleThunks } from 'Store/thunks';
 import sortByProp from 'Utilities/Array/sortByProp';
 import createAjaxRequest from 'Utilities/createAjaxRequest';
+import fetchReleaseStream from 'Utilities/fetchReleaseStream';
 import translate from 'Utilities/String/translate';
-import createFetchHandler from './Creators/createFetchHandler';
+import { set } from './baseActions';
 import createHandleActions from './Creators/createHandleActions';
 import createSetClientSideCollectionFilterReducer from './Creators/Reducers/createSetClientSideCollectionFilterReducer';
 import createSetClientSideCollectionSortReducer from './Creators/Reducers/createSetClientSideCollectionSortReducer';
@@ -26,6 +27,7 @@ export const defaultState = {
   isPopulated: false,
   error: null,
   items: [],
+  selectedIndexerIds: [0],
   sortKey: 'releaseWeight',
   sortDirection: sortDirections.ASCENDING,
   sortPredicates: {
@@ -269,6 +271,7 @@ export const defaultState = {
 };
 
 export const persistState = [
+  'releases.selectedIndexerIds',
   'releases.episode.selectedFilterKey',
   'releases.episode.customFilters',
   'releases.season.selectedFilterKey',
@@ -280,6 +283,8 @@ export const persistState = [
 
 export const FETCH_RELEASES = 'releases/fetchReleases';
 export const CANCEL_FETCH_RELEASES = 'releases/cancelFetchReleases';
+export const APPEND_RELEASES = 'releases/appendReleases';
+export const SET_RELEASE_SEARCH_INDEXERS = 'releases/setReleaseSearchIndexers';
 export const SET_RELEASES_SORT = 'releases/setReleasesSort';
 export const CLEAR_RELEASES = 'releases/clearReleases';
 export const GRAB_RELEASE = 'releases/grabRelease';
@@ -292,6 +297,8 @@ export const SET_SEASON_RELEASES_FILTER = 'releases/setSeasonReleasesFilter';
 
 export const fetchReleases = createThunk(FETCH_RELEASES);
 export const cancelFetchReleases = createThunk(CANCEL_FETCH_RELEASES);
+export const appendReleases = createAction(APPEND_RELEASES);
+export const setReleaseSearchIndexers = createAction(SET_RELEASE_SEARCH_INDEXERS);
 export const setReleasesSort = createAction(SET_RELEASES_SORT);
 export const clearReleases = createAction(CLEAR_RELEASES);
 export const grabRelease = createThunk(GRAB_RELEASE);
@@ -300,24 +307,57 @@ export const setEpisodeReleasesFilter = createAction(SET_EPISODE_RELEASES_FILTER
 export const setSeasonReleasesFilter = createAction(SET_SEASON_RELEASES_FILTER);
 
 //
-// Helpers
-
-const fetchReleasesHelper = createFetchHandler(section, '/release');
-
-//
 // Action Handlers
 
 export const actionHandlers = handleThunks({
 
   [FETCH_RELEASES]: function(getState, payload, dispatch) {
-    const abortRequest = fetchReleasesHelper(getState, payload, dispatch);
+    if (abortCurrentRequest) {
+      abortCurrentRequest();
+    }
+
+    dispatch(set({
+      section,
+      isFetching: true,
+      isPopulated: true,
+      error: null,
+      items: []
+    }));
+
+    const { request, abortRequest } = fetchReleaseStream(payload, (event) => {
+      if (event.type === 'results') {
+        dispatch(appendReleases(event.releases));
+      } else if (event.type === 'complete') {
+        dispatch(set({
+          section,
+          isFetching: false,
+          isPopulated: true,
+          error: null,
+          items: event.releases
+        }));
+        abortCurrentRequest = null;
+      }
+    });
 
     abortCurrentRequest = abortRequest;
+
+    request.catch((error) => {
+      if (error.name !== 'AbortError' && abortCurrentRequest === abortRequest) {
+        dispatch(set({
+          section,
+          isFetching: false,
+          isPopulated: false,
+          error
+        }));
+        abortCurrentRequest = null;
+      }
+    });
   },
 
   [CANCEL_FETCH_RELEASES]: function(getState, payload, dispatch) {
     if (abortCurrentRequest) {
-      abortCurrentRequest = abortCurrentRequest();
+      abortCurrentRequest();
+      abortCurrentRequest = null;
     }
   },
 
@@ -361,6 +401,34 @@ export const actionHandlers = handleThunks({
 
 export const reducers = createHandleActions({
 
+  [APPEND_RELEASES]: (state, { payload }) => {
+    const items = [...state.items];
+
+    payload.forEach((release) => {
+      const index = items.findIndex((item) => {
+        return item.indexerId === release.indexerId && item.guid === release.guid;
+      });
+
+      if (index === -1) {
+        items.push(release);
+      } else {
+        items.splice(index, 1, release);
+      }
+    });
+
+    return {
+      ...state,
+      items
+    };
+  },
+
+  [SET_RELEASE_SEARCH_INDEXERS]: (state, { payload }) => {
+    return {
+      ...state,
+      selectedIndexerIds: payload.selectedIndexerIds
+    };
+  },
+
   [CLEAR_RELEASES]: (state) => {
     const {
       episode,
@@ -368,7 +436,10 @@ export const reducers = createHandleActions({
       ...otherDefaultState
     } = defaultState;
 
-    return Object.assign({}, state, otherDefaultState);
+    return Object.assign({}, state, otherDefaultState, {
+      // This preference is browser-only and should survive closing the modal.
+      selectedIndexerIds: state.selectedIndexerIds
+    });
   },
 
   [UPDATE_RELEASE]: (state, { payload }) => {

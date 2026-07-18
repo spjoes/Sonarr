@@ -1,0 +1,149 @@
+name: Build Unraid GHCR Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/v4-streaming-interactive-search
+    paths:
+      - ".github/workflows/custom-unraid-image.yml"
+      - "distribution/unraid/**"
+      - "frontend/**"
+      - "src/**"
+      - "build.sh"
+      - "global.json"
+      - "package.json"
+      - "yarn.lock"
+
+concurrency:
+  group: unraid-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FRAMEWORK: net6.0
+  RUNTIME: linux-musl-x64
+  VERSION: 4.0.19
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/sonarr
+
+jobs:
+  backend:
+    name: Build backend
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Configure build version
+        shell: bash
+        run: |
+          DOTNET_VERSION=$(jq -r '.sdk.version' global.json)
+          echo "SDK_PATH=${DOTNET_ROOT}/sdk/${DOTNET_VERSION}" >> "${GITHUB_ENV}"
+          echo "SONARR_VERSION=${VERSION}.${GITHUB_RUN_NUMBER}" >> "${GITHUB_ENV}"
+          echo "BRANCH=feature-v4-streaming-interactive-search" >> "${GITHUB_ENV}"
+
+      - name: Build Sonarr backend
+        shell: bash
+        run: ./build.sh --backend --packages --framework "${FRAMEWORK}" --runtime "${RUNTIME}"
+
+      - name: Upload backend
+        uses: actions/upload-artifact@v4
+        with:
+          name: custom-sonarr-backend
+          if-no-files-found: error
+          retention-days: 1
+          path: _artifacts/${{ env.RUNTIME }}/${{ env.FRAMEWORK }}/Sonarr/**/*
+
+  frontend:
+    name: Build frontend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node and Yarn
+        uses: volta-cli/action@v4
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --network-timeout 120000
+
+      - name: Lint
+        run: |
+          yarn lint
+          yarn stylelint -f github
+
+      - name: Build UI
+        run: yarn build --env production
+
+      - name: Upload UI
+        uses: actions/upload-artifact@v4
+        with:
+          name: custom-sonarr-ui
+          if-no-files-found: error
+          retention-days: 1
+          path: _output/UI/**/*
+
+  image:
+    name: Publish GHCR image
+    needs:
+      - backend
+      - frontend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Download backend
+        uses: actions/download-artifact@v4
+        with:
+          name: custom-sonarr-backend
+          path: image-context/Sonarr
+
+      - name: Download UI
+        uses: actions/download-artifact@v4
+        with:
+          name: custom-sonarr-ui
+          path: image-context/Sonarr/UI
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=interactive-search-v4
+            type=sha,prefix=interactive-search-v4-
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: image-context
+          file: distribution/unraid/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_VERSION=${{ env.VERSION }}.${{ github.run_number }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

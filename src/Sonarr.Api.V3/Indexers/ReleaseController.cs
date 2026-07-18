@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using FluentValidation;
 using Microsoft.AspNetCore.Mvc;
@@ -7,6 +9,7 @@ using NLog;
 using NzbDrone.Common.Cache;
 using NzbDrone.Common.EnsureThat;
 using NzbDrone.Common.Extensions;
+using NzbDrone.Common.Serializer;
 using NzbDrone.Core.DecisionEngine;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.Exceptions;
@@ -25,6 +28,8 @@ namespace Sonarr.Api.V3.Indexers
     [V3ApiController]
     public class ReleaseController : ReleaseControllerBase
     {
+        private static readonly JsonSerializerOptions StreamingSerializerSettings = CreateStreamingSerializerSettings();
+
         private readonly IFetchAndParseRss _rssFetcherAndParser;
         private readonly ISearchForReleases _releaseSearchService;
         private readonly IMakeDownloadDecision _downloadDecisionMaker;
@@ -185,6 +190,67 @@ namespace Sonarr.Api.V3.Indexers
             return await GetRss();
         }
 
+        [HttpGet("stream")]
+        [Produces("application/x-ndjson")]
+        public async Task GetStreamingReleases(int? seriesId, int? episodeId, int? seasonNumber, [FromQuery(Name = "indexerId")] int[] indexerIds)
+        {
+            Response.ContentType = "application/x-ndjson";
+            Response.Headers["Cache-Control"] = "no-cache";
+            Response.Headers["X-Accel-Buffering"] = "no";
+
+            var options = new ReleaseSearchOptions
+            {
+                IndexerIds = indexerIds?.Length > 0 ? indexerIds : null,
+                OnIndexerResults = async decisions =>
+                {
+                    var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
+                    var releases = MapDecisions(prioritizedDecisions);
+
+                    await WriteStreamingEvent(new { type = "results", releases });
+                }
+            };
+
+            try
+            {
+                List<DownloadDecision> decisions;
+
+                if (episodeId.HasValue)
+                {
+                    decisions = await _releaseSearchService.EpisodeSearch(episodeId.Value, true, true, options);
+                }
+                else if (seriesId.HasValue && seasonNumber.HasValue)
+                {
+                    decisions = await _releaseSearchService.SeasonSearch(seriesId.Value, seasonNumber.Value, false, false, true, true, options);
+                }
+                else
+                {
+                    throw new SearchFailedException("An episode or season is required for interactive search");
+                }
+
+                var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
+                var releases = MapDecisions(prioritizedDecisions);
+
+                await WriteStreamingEvent(new { type = "complete", releases });
+            }
+            catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                // The browser closed or restarted the interactive search.
+            }
+            catch (SearchFailedException ex)
+            {
+                await WriteStreamingEvent(new { type = "error", message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Interactive search failed: " + ex.Message);
+
+                if (!HttpContext.RequestAborted.IsCancellationRequested)
+                {
+                    await WriteStreamingEvent(new { type = "error", message = ex.Message });
+                }
+            }
+        }
+
         private async Task<List<ReleaseResource>> GetEpisodeReleases(int episodeId)
         {
             try
@@ -232,6 +298,23 @@ namespace Sonarr.Api.V3.Indexers
             var prioritizedDecisions = _prioritizeDownloadDecision.PrioritizeDecisions(decisions);
 
             return MapDecisions(prioritizedDecisions);
+        }
+
+        private static JsonSerializerOptions CreateStreamingSerializerSettings()
+        {
+            var settings = STJson.GetSerializerSettings();
+            settings.WriteIndented = false;
+
+            return settings;
+        }
+
+        private async Task WriteStreamingEvent(object value)
+        {
+            var json = JsonSerializer.Serialize(value, value.GetType(), StreamingSerializerSettings) + "\n";
+            var bytes = Encoding.UTF8.GetBytes(json);
+
+            await Response.Body.WriteAsync(bytes, 0, bytes.Length, HttpContext.RequestAborted);
+            await Response.Body.FlushAsync(HttpContext.RequestAborted);
         }
 
         protected override ReleaseResource MapDecision(DownloadDecision decision, int initialWeight)

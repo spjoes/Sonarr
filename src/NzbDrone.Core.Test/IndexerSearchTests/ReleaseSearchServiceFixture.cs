@@ -141,6 +141,84 @@ namespace NzbDrone.Core.Test.IndexerSearchTests
         }
 
         [Test]
+        public async Task should_only_search_selected_indexers()
+        {
+            var secondIndexer = new Mock<IIndexer>();
+            secondIndexer.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = 2 });
+            secondIndexer.Setup(v => v.Fetch(It.IsAny<SeasonSearchCriteria>()))
+                .Returns(Task.FromResult<IList<Parser.Model.ReleaseInfo>>(new List<Parser.Model.ReleaseInfo>()));
+
+            _mockIndexer.Setup(v => v.Fetch(It.IsAny<SeasonSearchCriteria>()))
+                .Returns(Task.FromResult<IList<Parser.Model.ReleaseInfo>>(new List<Parser.Model.ReleaseInfo>()));
+
+            Mocker.GetMock<IIndexerFactory>()
+                .Setup(s => s.AutomaticSearchEnabled(true))
+                .Returns(new List<IIndexer> { _mockIndexer.Object, secondIndexer.Object });
+
+            WithEpisodes();
+
+            await Subject.SeasonSearch(
+                _xemSeries.Id,
+                1,
+                false,
+                false,
+                true,
+                false,
+                new ReleaseSearchOptions { IndexerIds = new[] { 1 } });
+
+            _mockIndexer.Verify(v => v.Fetch(It.IsAny<SeasonSearchCriteria>()), Times.Once);
+            secondIndexer.Verify(v => v.Fetch(It.IsAny<SeasonSearchCriteria>()), Times.Never);
+        }
+
+        [Test]
+        public async Task should_report_each_indexers_results_as_it_completes()
+        {
+            var secondIndexer = new Mock<IIndexer>();
+            secondIndexer.SetupGet(s => s.Definition).Returns(new IndexerDefinition { Id = 2 });
+
+            var firstRelease = new Parser.Model.ReleaseInfo { Guid = "first" };
+            var secondRelease = new Parser.Model.ReleaseInfo { Guid = "second" };
+
+            _mockIndexer.Setup(v => v.Fetch(It.IsAny<SeasonSearchCriteria>()))
+                .Returns(Task.FromResult<IList<Parser.Model.ReleaseInfo>>(new List<Parser.Model.ReleaseInfo> { firstRelease }));
+
+            secondIndexer.Setup(v => v.Fetch(It.IsAny<SeasonSearchCriteria>()))
+                .Returns(Task.FromResult<IList<Parser.Model.ReleaseInfo>>(new List<Parser.Model.ReleaseInfo> { secondRelease }));
+
+            Mocker.GetMock<IIndexerFactory>()
+                .Setup(s => s.AutomaticSearchEnabled(true))
+                .Returns(new List<IIndexer> { _mockIndexer.Object, secondIndexer.Object });
+
+            Mocker.GetMock<IMakeDownloadDecision>()
+                .Setup(s => s.GetSearchDecision(It.IsAny<List<Parser.Model.ReleaseInfo>>(), It.IsAny<SearchCriteriaBase>()))
+                .Returns<List<Parser.Model.ReleaseInfo>, SearchCriteriaBase>((reports, _) =>
+                    reports.Select(report => new DownloadDecision(new Parser.Model.RemoteEpisode { Release = report })).ToList());
+
+            var streamedBatchSizes = new List<int>();
+
+            WithEpisodes();
+
+            var decisions = await Subject.SeasonSearch(
+                _xemSeries.Id,
+                1,
+                false,
+                false,
+                true,
+                false,
+                new ReleaseSearchOptions
+                {
+                    OnIndexerResults = batch =>
+                    {
+                        streamedBatchSizes.Add(batch.Count);
+                        return Task.CompletedTask;
+                    }
+                });
+
+            streamedBatchSizes.Should().BeEquivalentTo(new[] { 1, 1 });
+            decisions.Should().HaveCount(2);
+        }
+
+        [Test]
         public async Task Tags_IndexerTags_SeriesNoTags_IndexerNotIncluded()
         {
             _mockIndexer.SetupGet(s => s.Definition).Returns(new IndexerDefinition
