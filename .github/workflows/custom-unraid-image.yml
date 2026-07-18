@@ -1,6 +1,7 @@
 name: Build Unraid GHCR Image
 
 on:
+  # Keep deployment builds isolated from the fork's upstream-tracking branches.
   workflow_dispatch:
   push:
     branches:
