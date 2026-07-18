@@ -313,7 +313,7 @@ namespace Sonarr.Api.V3.Indexers
             var json = JsonSerializer.Serialize(value, value.GetType(), StreamingSerializerSettings) + "\n";
             var bytes = Encoding.UTF8.GetBytes(json);
 
-            await Response.Body.WriteAsync(bytes, 0, bytes.Length, HttpContext.RequestAborted);
+            await Response.Body.WriteAsync(bytes.AsMemory(), HttpContext.RequestAborted);
             await Response.Body.FlushAsync(HttpContext.RequestAborted);
         }
 
