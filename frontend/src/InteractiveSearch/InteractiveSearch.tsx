@@ -203,7 +203,6 @@ function InteractiveSearch({ type, searchPayload }: InteractiveSearchProps) {
     <div>
       <div className={styles.filterMenuContainer}>
         <InteractiveSearchIndexerSelect
-          className={styles.indexerSelect}
           value={selectedIndexerIds}
           onChange={handleIndexerChange}
         />

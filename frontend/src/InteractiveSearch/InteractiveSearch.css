@@ -1,14 +1,9 @@
 .filterMenuContainer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 10px;
   margin-bottom: 10px;
-}
-
-.indexerSelect {
-  composes: enhancedSelect from '~Components/Form/Select/EnhancedSelectInput.css';
-
-  margin-right: 10px;
-  min-width: 220px;
 }
 
 .filteredMessage {

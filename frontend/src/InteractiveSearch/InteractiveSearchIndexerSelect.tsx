@@ -1,57 +1,23 @@
 import React, { useCallback, useEffect, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import AppState from 'App/State/AppState';
-import EnhancedSelectInput, {
-  EnhancedSelectInputValue,
-} from 'Components/Form/Select/EnhancedSelectInput';
-import EnhancedSelectInputSelectedValue from 'Components/Form/Select/EnhancedSelectInputSelectedValue';
+import Menu from 'Components/Menu/Menu';
+import MenuContent from 'Components/Menu/MenuContent';
+import PageMenuButton from 'Components/Menu/PageMenuButton';
+import SelectedMenuItem from 'Components/Menu/SelectedMenuItem';
+import { align, icons } from 'Helpers/Props';
 import { fetchIndexers } from 'Store/Actions/settingsActions';
 import { EnhancedSelectInputChanged } from 'typings/inputs';
 import translate from 'Utilities/String/translate';
 
 const ALL_INDEXERS = 0;
 
-interface SelectedValueProps {
-  selectedValue: number[];
-  values: EnhancedSelectInputValue<number[]>[];
-  isDisabled?: boolean;
-}
-
-function IndexerSelectedValue({
-  selectedValue,
-  values,
-  isDisabled,
-}: SelectedValueProps) {
-  const label = useMemo(() => {
-    if (selectedValue.includes(ALL_INDEXERS)) {
-      return `${translate('All')} ${translate('Indexers')}`;
-    }
-
-    if (selectedValue.length === 1) {
-      return (
-        values.find((value) => value.key === selectedValue[0])?.value ??
-        translate('Indexer')
-      );
-    }
-
-    return `${selectedValue.length} ${translate('Indexers')}`;
-  }, [selectedValue, values]);
-
-  return (
-    <EnhancedSelectInputSelectedValue isDisabled={isDisabled}>
-      {label}
-    </EnhancedSelectInputSelectedValue>
-  );
-}
-
 interface InteractiveSearchIndexerSelectProps {
-  className?: string;
   value: number[];
   onChange: (change: EnhancedSelectInputChanged<number[]>) => void;
 }
 
 function InteractiveSearchIndexerSelect({
-  className,
   value,
   onChange,
 }: InteractiveSearchIndexerSelectProps) {
@@ -60,7 +26,7 @@ function InteractiveSearchIndexerSelect({
     (state: AppState) => state.settings.indexers
   );
 
-  const values = useMemo<EnhancedSelectInputValue<number[]>[]>(() => {
+  const values = useMemo(() => {
     const indexers = items
       .filter((indexer) => indexer.enableInteractiveSearch)
       .sort((a, b) => a.name.localeCompare(b.name))
@@ -103,20 +69,43 @@ function InteractiveSearchIndexerSelect({
     }
   }, [isPopulated, onChange, value, values]);
 
-  const handleChange = useCallback(
-    (change: EnhancedSelectInputChanged<number[]>) => {
-      let selectedIndexerIds = change.value;
+  const label = useMemo(() => {
+    if (value.includes(ALL_INDEXERS)) {
+      return `${translate('All')} ${translate('Indexers')}`;
+    }
 
-      if (!selectedIndexerIds.length) {
-        selectedIndexerIds = [ALL_INDEXERS];
-      } else if (selectedIndexerIds.includes(ALL_INDEXERS)) {
-        selectedIndexerIds = value.includes(ALL_INDEXERS)
-          ? selectedIndexerIds.filter((id) => id !== ALL_INDEXERS)
-          : [ALL_INDEXERS];
+    if (value.length === 1) {
+      return (
+        values.find((item) => item.key === value[0])?.value ??
+        translate('Indexer')
+      );
+    }
+
+    return `${value.length} ${translate('Indexers')}`;
+  }, [value, values]);
+
+  const handleIndexerPress = useCallback(
+    (indexerId: string) => {
+      const selectedIndexerId = Number(indexerId);
+      let selectedIndexerIds = [ALL_INDEXERS];
+
+      if (selectedIndexerId !== ALL_INDEXERS) {
+        if (value.includes(selectedIndexerId)) {
+          selectedIndexerIds = value.filter((id) => id !== selectedIndexerId);
+
+          if (!selectedIndexerIds.length) {
+            selectedIndexerIds = [ALL_INDEXERS];
+          }
+        } else {
+          selectedIndexerIds = [
+            ...value.filter((id) => id !== ALL_INDEXERS),
+            selectedIndexerId,
+          ];
+        }
       }
 
       onChange({
-        ...change,
+        name: 'indexerIds',
         value: selectedIndexerIds,
       });
     },
@@ -124,15 +113,29 @@ function InteractiveSearchIndexerSelect({
   );
 
   return (
-    <EnhancedSelectInput
-      className={className}
-      name="indexerIds"
-      value={value}
-      values={values}
-      isFetching={isFetching}
-      selectedValueComponent={IndexerSelectedValue}
-      onChange={handleChange}
-    />
+    <Menu alignMenu={align.RIGHT}>
+      <PageMenuButton
+        iconName={icons.SEARCH}
+        showIndicator={!value.includes(ALL_INDEXERS)}
+        text={label}
+        isDisabled={isFetching}
+      />
+
+      <MenuContent>
+        {values.map((indexer) => {
+          return (
+            <SelectedMenuItem
+              key={indexer.key}
+              name={String(indexer.key)}
+              isSelected={value.includes(indexer.key)}
+              onPress={handleIndexerPress}
+            >
+              {indexer.value}
+            </SelectedMenuItem>
+          );
+        })}
+      </MenuContent>
+    </Menu>
   );
 }
 

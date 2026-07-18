@@ -3,7 +3,6 @@
 interface CssExports {
   'filterMenuContainer': string;
   'filteredMessage': string;
-  'indexerSelect': string;
 }
 export const cssExports: CssExports;
 export default cssExports;
